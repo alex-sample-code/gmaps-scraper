@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Maps Restaurant Scraper</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: {
+              900: '#0d1117',
+              800: '#161b22',
+              700: '#21262d',
+              600: '#30363d',
+              500: '#484f58',
+              400: '#6e7681',
+              300: '#8b949e',
+              200: '#b1bac4',
+              100: '#c9d1d9',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #0d1117; color: #c9d1d9; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #161b22; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+    .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+    .status-pending   { background: #21262d; color: #8b949e; }
+    .status-running   { background: #1f2d3d; color: #58a6ff; }
+    .status-completed { background: #1a2e1a; color: #3fb950; }
+    .status-failed    { background: #2d1a1a; color: #f85149; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .pulse-running { background: #58a6ff; animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .table-row:hover { background: #161b22; }
+    input, select { background: #161b22 !important; border-color: #30363d !important; color: #c9d1d9 !important; }
+    input:focus, select:focus { border-color: #58a6ff !important; outline: none !important; box-shadow: 0 0 0 2px rgba(88,166,255,.2) !important; }
+
+    /* Address search */
+    #addressSearchWrapper { position: relative; }
+    #suggestionsList {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0; right: 0;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      z-index: 100;
+      max-height: 280px;
+      overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    }
+    #suggestionsList .suggestion-item {
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: #b1bac4;
+      border-bottom: 1px solid #21262d;
+      transition: background 0.1s;
+    }
+    #suggestionsList .suggestion-item:last-child { border-bottom: none; }
+    #suggestionsList .suggestion-item:hover,
+    #suggestionsList .suggestion-item.active { background: #21262d; color: #c9d1d9; }
+    #addressSearch:read-only { opacity: 0.7; cursor: default; }
+    #addressSearch:read-only:focus { border-color: #30363d !important; box-shadow: none !important; }
+  </style>
+</head>
+<body class="min-h-screen font-mono">
+
+<!-- ── Header ── -->
+<header class="border-b border-dark-700 bg-dark-800 sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+    <svg class="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+    </svg>
+    <h1 class="text-lg font-bold text-dark-100 tracking-tight">Google Maps Restaurant Scraper</h1>
+    <span class="ml-auto text-xs text-dark-400">Powered by Playwright</span>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- ── Scrape Form ── -->
+  <section class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+    <h2 class="text-sm font-semibold text-dark-300 uppercase tracking-widest mb-4">New Scrape Job</h2>
+    <form id="scrapeForm" class="space-y-4">
+
+      <!-- Address search row -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-end">
+
+        <!-- Unified address search -->
+        <div class="lg:col-span-2">
+          <label class="block text-xs text-dark-400 mb-1">Address Search</label>
+          <div id="addressSearchWrapper">
+            <div class="relative">
+              <!-- Search icon -->
+              <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <input id="addressSearch" type="text" autocomplete="off"
+                placeholder="Search for a street, e.g. George Street Sydney Australia"
+                class="w-full pl-9 pr-9 py-2.5 rounded-lg border text-sm" />
+              <!-- Clear button -->
+              <button id="clearAddressBtn" type="button" style="display:none"
+                onclick="clearAddress()"
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-dark-400 hover:text-dark-200 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            <!-- Suggestions dropdown -->
+            <div id="suggestionsList" style="display:none"></div>
+          </div>
+
+          <!-- Selected address badge -->
+          <div id="selectedAddressBadge" style="display:none" class="mt-2 flex items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 bg-green-900/40 border border-green-700/50 text-green-400 text-xs rounded-full">
+              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              <span id="selectedAddressText"></span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Max Results slider -->
+        <div>
+          <label class="block text-xs text-dark-400 mb-1">
+            Max Results: <span id="maxLabel" class="text-blue-400">50</span>
+          </label>
+          <input id="maxResults" type="range" min="10" max="100" value="50"
+            class="w-full accent-blue-500 mt-2"
+            oninput="document.getElementById('maxLabel').textContent=this.value" />
+          <div class="flex justify-between text-xs text-dark-500 mt-1"><span>10</span><span>100</span></div>
+        </div>
+      </div>
+
+      <!-- Hidden structured fields -->
+      <input type="hidden" id="hiddenCountry" />
+      <input type="hidden" id="hiddenCity" />
+      <input type="hidden" id="hiddenStreet" />
+
+      <!-- Submit row -->
+      <div class="flex items-center gap-3 pt-1">
+        <button type="submit" id="submitBtn"
+          class="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Search
+        </button>
+        <span id="formMsg" class="text-sm text-dark-400"></span>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Search History Panel ── -->
+  <section id="historyPanel" style="display:none" class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-sm font-semibold text-dark-300 uppercase tracking-widest">Search History</h2>
+        <p id="historySubtitle" class="text-xs text-dark-500 mt-0.5"></p>
+      </div>
+      <div class="flex gap-2" id="historyActions"></div>
+    </div>
+    <div id="historyContent"></div>
+  </section>
+
+  <!-- ── Jobs + Results layout ── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- ── Job List ── -->
+    <div class="lg:col-span-1">
+      <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-600">
+          <h2 class="text-sm font-semibold text-dark-300 uppercase tracking-widest">Jobs</h2>
+          <button onclick="loadJobs()" class="text-xs text-blue-400 hover:text-blue-300">Refresh</button>
+        </div>
+        <div id="jobList" class="divide-y divide-dark-700 max-h-[520px] overflow-y-auto">
+          <p class="p-4 text-sm text-dark-500 text-center">No jobs yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Results Panel ── -->
+    <div class="lg:col-span-2">
+      <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-600">
+          <div>
+            <h2 class="text-sm font-semibold text-dark-300 uppercase tracking-widest">Results</h2>
+            <p id="resultsSubtitle" class="text-xs text-dark-500 mt-0.5">Select a job to view results.</p>
+          </div>
+          <button id="exportBtn" onclick="exportCSV()" style="display:none"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            Export CSV
+          </button>
+        </div>
+
+        <!-- Progress bar -->
+        <div id="progressSection" style="display:none" class="px-4 pt-3 pb-1">
+          <div class="flex items-center justify-between text-xs text-dark-400 mb-1.5">
+            <span id="progressLabel">Scraping...</span>
+            <span id="progressCount">0 / 0</span>
+          </div>
+          <div class="w-full bg-dark-700 rounded-full h-1.5">
+            <div id="progressBar" class="h-1.5 bg-blue-500 rounded-full transition-all duration-300" style="width:0%"></div>
+          </div>
+          <p id="currentItem" class="text-xs text-dark-500 mt-1 truncate"></p>
+        </div>
+
+        <!-- Results table -->
+        <div id="resultsArea" class="overflow-x-auto max-h-[460px] overflow-y-auto">
+          <p id="resultsEmpty" class="p-6 text-sm text-dark-500 text-center">No results to display.</p>
+          <table id="resultsTable" class="w-full text-xs" style="display:none">
+            <thead class="sticky top-0 bg-dark-900 text-dark-400 uppercase text-xs">
+              <tr>
+                <th class="px-3 py-2 text-left w-48">Name</th>
+                <th class="px-3 py-2 text-left">Rating</th>
+                <th class="px-3 py-2 text-left">Price Range</th>
+                <th class="px-3 py-2 text-left">Per Person</th>
+                <th class="px-3 py-2 text-left w-32">Category</th>
+                <th class="px-3 py-2 text-left w-48">Address</th>
+                <th class="px-3 py-2 text-left">Hours</th>
+                <th class="px-3 py-2 text-left">Services</th>
+                <th class="px-3 py-2 text-left">Phone</th>
+                <th class="px-3 py-2 text-left">Website</th>
+                <th class="px-3 py-2 text-left">Map</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody" class="divide-y divide-dark-700 text-dark-200"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentJobId = null;
+let ws = null;
+let suggestTimer = null;
+let activeSuggestionIndex = -1;
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function fmt(v) { return v || '—'; }
+
+function statusBadge(status) {
+  const icons = {
+    pending:   '⏳',
+    running:   '<span class="pulse-dot pulse-running"></span>',
+    completed: '✓',
+    failed:    '✗',
+  };
+  return `<span class="status-badge status-${status}">${icons[status] || ''} ${status}</span>`;
+}
+
+function shortQuery(q) {
+  return q.length > 40 ? q.slice(0, 37) + '…' : q;
+}
+
+// ── Address autocomplete ────────────────────────────────────────────────────
+const addressInput = document.getElementById('addressSearch');
+const suggestionsList = document.getElementById('suggestionsList');
+const clearBtn = document.getElementById('clearAddressBtn');
+const badge = document.getElementById('selectedAddressBadge');
+const badgeText = document.getElementById('selectedAddressText');
+
+addressInput.addEventListener('input', () => {
+  const val = addressInput.value.trim();
+  if (!val || val.length < 2) {
+    hideSuggestions();
+    return;
+  }
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(() => fetchSuggestions(val), 300);
+});
+
+addressInput.addEventListener('keydown', (e) => {
+  const items = suggestionsList.querySelectorAll('.suggestion-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeSuggestionIndex = Math.min(activeSuggestionIndex + 1, items.length - 1);
+    highlightSuggestion(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeSuggestionIndex = Math.max(activeSuggestionIndex - 1, 0);
+    highlightSuggestion(items);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (activeSuggestionIndex >= 0 && items[activeSuggestionIndex]) {
+      items[activeSuggestionIndex].click();
+    }
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('addressSearchWrapper').contains(e.target)) {
+    hideSuggestions();
+  }
+});
+
+function highlightSuggestion(items) {
+  items.forEach((el, i) => {
+    el.classList.toggle('active', i === activeSuggestionIndex);
+  });
+}
+
+async function fetchSuggestions(text) {
+  try {
+    const res = await fetch(`/api/places/suggest?text=${encodeURIComponent(text)}&max_results=8`);
+    const data = await res.json();
+    renderSuggestions(data.suggestions || []);
+  } catch (e) {
+    hideSuggestions();
+  }
+}
+
+function renderSuggestions(suggestions) {
+  if (!suggestions.length) { hideSuggestions(); return; }
+  activeSuggestionIndex = -1;
+  suggestionsList.innerHTML = suggestions.map(s => `
+    <div class="suggestion-item" data-text="${esc(s)}">${esc(s)}</div>
+  `).join('');
+  suggestionsList.querySelectorAll('.suggestion-item').forEach(el => {
+    el.addEventListener('click', () => selectSuggestion(el.dataset.text));
+  });
+  suggestionsList.style.display = 'block';
+}
+
+function hideSuggestions() {
+  suggestionsList.style.display = 'none';
+  activeSuggestionIndex = -1;
+}
+
+async function selectSuggestion(text) {
+  hideSuggestions();
+  addressInput.value = text;
+  addressInput.readOnly = true;
+  clearBtn.style.display = 'block';
+
+  // Show loading state in badge
+  badge.style.display = 'block';
+  badgeText.textContent = 'Resolving address…';
+
+  try {
+    const res = await fetch(`/api/places/search?text=${encodeURIComponent(text)}`);
+    const data = await res.json();
+    if (data.error) {
+      badgeText.textContent = text;
+      // Fallback: use the suggestion text as label
+      document.getElementById('hiddenCountry').value = '';
+      document.getElementById('hiddenCity').value = '';
+      document.getElementById('hiddenStreet').value = text;
+    } else {
+      document.getElementById('hiddenCountry').value = data.country || '';
+      document.getElementById('hiddenCity').value = data.city || '';
+      document.getElementById('hiddenStreet').value = data.street || text;
+      badgeText.textContent = data.label || text;
+    }
+  } catch (e) {
+    badgeText.textContent = text;
+    document.getElementById('hiddenStreet').value = text;
+  }
+}
+
+function clearAddress() {
+  addressInput.value = '';
+  addressInput.readOnly = false;
+  clearBtn.style.display = 'none';
+  badge.style.display = 'none';
+  badgeText.textContent = '';
+  document.getElementById('hiddenCountry').value = '';
+  document.getElementById('hiddenCity').value = '';
+  document.getElementById('hiddenStreet').value = '';
+  addressInput.focus();
+}
+
+// ── Load jobs list ─────────────────────────────────────────────────────────
+async function loadJobs() {
+  try {
+    const res = await fetch('/api/jobs');
+    const data = await res.json();
+    renderJobList(data.jobs || []);
+  } catch (e) {
+    console.error('loadJobs error', e);
+  }
+}
+
+function renderJobList(jobs) {
+  const el = document.getElementById('jobList');
+  if (!jobs.length) {
+    el.innerHTML = '<p class="p-4 text-sm text-dark-500 text-center">No jobs yet.</p>';
+    return;
+  }
+  el.innerHTML = jobs.map(j => `
+    <div class="job-item px-4 py-3 cursor-pointer hover:bg-dark-700 transition-colors ${j.id === currentJobId ? 'bg-dark-700 border-l-2 border-blue-500' : ''}"
+         onclick="selectJob('${j.id}')">
+      <div class="flex items-start justify-between gap-2 mb-1">
+        <span class="text-dark-200 text-xs font-medium leading-tight flex-1">${shortQuery(j.search_query)}</span>
+        ${statusBadge(j.status)}
+      </div>
+      <div class="flex items-center gap-3 text-xs text-dark-500">
+        <span>${j.scraped}/${j.total_found} found</span>
+        <span>${j.created_at ? j.created_at.slice(0,16).replace('T',' ') : ''}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Select job ─────────────────────────────────────────────────────────────
+async function selectJob(jobId) {
+  currentJobId = jobId;
+  document.querySelectorAll('.job-item').forEach(el => {
+    el.classList.remove('bg-dark-700', 'border-l-2', 'border-blue-500');
+  });
+  event.currentTarget.classList.add('bg-dark-700', 'border-l-2', 'border-blue-500');
+
+  await loadJobResults(jobId);
+  connectWebSocket(jobId);
+}
+
+async function loadJobResults(jobId) {
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    const job = await res.json();
+    renderResults(job);
+    if (job.status === 'running') {
+      showProgress(job.scraped, job.total_found, '');
+    } else {
+      hideProgress();
+    }
+  } catch (e) {
+    console.error('loadJobResults error', e);
+  }
+}
+
+function renderResults(job) {
+  const subtitle = document.getElementById('resultsSubtitle');
+  const exportBtn = document.getElementById('exportBtn');
+  const table = document.getElementById('resultsTable');
+  const empty = document.getElementById('resultsEmpty');
+  const tbody = document.getElementById('resultsBody');
+
+  subtitle.textContent = `${job.search_query} — ${job.scraped} result${job.scraped !== 1 ? 's' : ''}`;
+
+  if (!job.results || !job.results.length) {
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    exportBtn.style.display = 'none';
+    return;
+  }
+
+  empty.style.display = 'none';
+  table.style.display = 'table';
+  exportBtn.style.display = 'flex';
+
+  tbody.innerHTML = job.results.map(r => buildResultRow(r)).join('');
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function safeHostname(url) {
+  try { return new URL(url).hostname.replace('www.',''); } catch(e) { return esc(url); }
+}
+
+function buildResultRow(r) {
+  return `
+    <tr class="table-row transition-colors">
+      <td class="px-3 py-2 font-medium text-dark-100 max-w-[12rem] truncate" title="${esc(r.name)}">${esc(r.name)}</td>
+      <td class="px-3 py-2 whitespace-nowrap">
+        ${r.rating ? `<span class="text-yellow-400">★</span> ${esc(r.rating)}` : '—'}
+        ${r.review_count ? `<span class="text-dark-500">(${esc(r.review_count)})</span>` : ''}
+      </td>
+      <td class="px-3 py-2 whitespace-nowrap text-green-400">${esc(r.price_range) || '—'}</td>
+      <td class="px-3 py-2 whitespace-nowrap text-amber-400">${esc(r.price_per_person) || '—'}</td>
+      <td class="px-3 py-2 max-w-[8rem] truncate text-dark-400" title="${esc(r.category)}">${esc(r.category) || '—'}</td>
+      <td class="px-3 py-2 max-w-[12rem] truncate text-dark-300" title="${esc(r.address)}">${esc(r.address) || '—'}</td>
+      <td class="px-3 py-2 max-w-[10rem] truncate text-dark-400" title="${esc(r.hours)}">${esc(r.hours) || '—'}</td>
+      <td class="px-3 py-2 max-w-[8rem] truncate text-dark-400" title="${esc(r.services)}">${esc(r.services) || '—'}</td>
+      <td class="px-3 py-2 whitespace-nowrap text-dark-300">${esc(r.phone) || '—'}</td>
+      <td class="px-3 py-2 max-w-[8rem]">
+        ${r.website ? `<a href="${esc(r.website)}" target="_blank" class="text-blue-400 hover:text-blue-300 truncate block max-w-[7rem]">${safeHostname(r.website)}</a>` : '—'}
+      </td>
+      <td class="px-3 py-2">
+        ${r.url ? `<a href="${esc(r.url)}" target="_blank" class="text-red-400 hover:text-red-300 text-xs">Map ↗</a>` : '—'}
+      </td>
+    </tr>`;
+}
+
+// ── Progress ───────────────────────────────────────────────────────────────
+function showProgress(scraped, total, current) {
+  const sec = document.getElementById('progressSection');
+  sec.style.display = 'block';
+  document.getElementById('progressCount').textContent = `${scraped} / ${total || '?'}`;
+  document.getElementById('progressLabel').textContent = 'Scraping restaurants…';
+  document.getElementById('currentItem').textContent = current ? `→ ${current}` : '';
+  const pct = total ? Math.round((scraped / total) * 100) : 0;
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+
+function hideProgress() {
+  document.getElementById('progressSection').style.display = 'none';
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWebSocket(jobId) {
+  if (ws) { ws.close(); ws = null; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+
+  ws.onmessage = async (evt) => {
+    const msg = JSON.parse(evt.data);
+
+    if (msg.type === 'ping') return;
+
+    if (msg.type === 'status') {
+      if (msg.status === 'running') showProgress(msg.scraped, msg.total, '');
+      else hideProgress();
+    }
+
+    if (msg.type === 'total_found') {
+      showProgress(0, msg.total, '');
+    }
+
+    if (msg.type === 'progress') {
+      showProgress(msg.scraped, msg.total, msg.current);
+      appendResult(msg.scraped, msg.total, msg.current);
+      if (msg.scraped % 10 === 0) await loadJobResults(jobId);
+      await loadJobs();
+    }
+
+    if (msg.type === 'completed') {
+      hideProgress();
+      await loadJobResults(jobId);
+      await loadJobs();
+    }
+
+    if (msg.type === 'error') {
+      hideProgress();
+      document.getElementById('formMsg').textContent = 'Error: ' + msg.message;
+      await loadJobs();
+    }
+  };
+
+  ws.onerror = () => {};
+  ws.onclose = () => { ws = null; };
+}
+
+function appendResult(scraped, total, current) {
+  showProgress(scraped, total, current);
+}
+
+// ── Export CSV ─────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!currentJobId) return;
+  const a = document.createElement('a');
+  a.href = `/api/jobs/${currentJobId}/export?format=csv`;
+  a.download = `restaurants_${currentJobId.slice(0,8)}.csv`;
+  a.click();
+}
+
+// ── History panel helpers ───────────────────────────────────────────────────
+function buildResultsTable(results) {
+  if (!results || !results.length) return '<p class="text-sm text-dark-500 py-2">No results recorded.</p>';
+  return `
+    <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
+      <table class="w-full text-xs">
+        <thead class="sticky top-0 bg-dark-900 text-dark-400 uppercase text-xs">
+          <tr>
+            <th class="px-3 py-2 text-left w-48">Name</th>
+            <th class="px-3 py-2 text-left">Rating</th>
+            <th class="px-3 py-2 text-left">Price Range</th>
+            <th class="px-3 py-2 text-left">Per Person</th>
+            <th class="px-3 py-2 text-left w-32">Category</th>
+            <th class="px-3 py-2 text-left w-48">Address</th>
+            <th class="px-3 py-2 text-left">Hours</th>
+            <th class="px-3 py-2 text-left">Services</th>
+            <th class="px-3 py-2 text-left">Phone</th>
+            <th class="px-3 py-2 text-left">Website</th>
+            <th class="px-3 py-2 text-left">Map</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-dark-700 text-dark-200">
+          ${results.map(r => buildResultRow(r)).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function showHistoryPanel(jobs, country, city, street, max) {
+  const panel = document.getElementById('historyPanel');
+  const subtitle = document.getElementById('historySubtitle');
+  const actions = document.getElementById('historyActions');
+  const content = document.getElementById('historyContent');
+
+  panel.style.display = 'block';
+
+  const rescrapeBtn = `
+    <button onclick="triggerScrape()" id="rescrapeBtn"
+      class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+      Re-scrape
+    </button>`;
+
+  const startBtn = `
+    <button onclick="triggerScrape()" id="startScrapingBtn"
+      class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      Start Scraping
+    </button>`;
+
+  if (jobs.length > 0) {
+    const latest = jobs[0];
+    const completedAt = latest.completed_at
+      ? latest.completed_at.slice(0, 16).replace('T', ' ') + ' UTC'
+      : 'unknown';
+    subtitle.textContent = `${latest.results.length} result${latest.results.length !== 1 ? 's' : ''} — Last scraped: ${completedAt}`;
+    actions.innerHTML = rescrapeBtn;
+    content.innerHTML = buildResultsTable(latest.results);
+  } else {
+    subtitle.textContent = 'No existing data found for this location.';
+    actions.innerHTML = startBtn;
+    content.innerHTML = '<p class="text-sm text-dark-500 py-2">Start scraping to collect restaurant data for this location.</p>';
+  }
+
+  panel.dataset.country = country;
+  panel.dataset.city = city;
+  panel.dataset.street = street;
+  panel.dataset.max = max;
+}
+
+async function triggerScrape() {
+  const panel = document.getElementById('historyPanel');
+  const country = panel.dataset.country;
+  const city    = panel.dataset.city;
+  const street  = panel.dataset.street;
+  const max     = parseInt(panel.dataset.max);
+  const msg     = document.getElementById('formMsg');
+
+  const btn = document.getElementById('rescrapeBtn') || document.getElementById('startScrapingBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  msg.textContent = '';
+
+  try {
+    const res = await fetch('/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ country, city, street, max_results: max }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Request failed');
+
+    msg.textContent = `Job started: ${data.search_query}`;
+    msg.className = 'text-sm text-green-400';
+
+    document.getElementById('historyPanel').style.display = 'none';
+    await loadJobs();
+    currentJobId = data.job_id;
+    await loadJobResults(data.job_id);
+    connectWebSocket(data.job_id);
+    const jobs = await fetch('/api/jobs').then(r => r.json());
+    renderJobList(jobs.jobs || []);
+
+  } catch (err) {
+    msg.textContent = 'Error: ' + err.message;
+    msg.className = 'text-sm text-red-400';
+    if (btn) { btn.disabled = false; btn.textContent = btn.id === 'rescrapeBtn' ? 'Re-scrape' : 'Start Scraping'; }
+  }
+}
+
+// ── Form submit ────────────────────────────────────────────────────────────
+document.getElementById('scrapeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const msg = document.getElementById('formMsg');
+
+  const country = document.getElementById('hiddenCountry').value.trim();
+  const city    = document.getElementById('hiddenCity').value.trim();
+  const street  = document.getElementById('hiddenStreet').value.trim();
+  const max     = parseInt(document.getElementById('maxResults').value);
+
+  if (!street) {
+    msg.textContent = 'Please select an address from the suggestions.';
+    msg.className = 'text-sm text-red-400';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Searching…`;
+  msg.textContent = '';
+
+  try {
+    const params = new URLSearchParams({ country, city, street });
+    const res = await fetch(`/api/search?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Search failed');
+
+    showHistoryPanel(data.jobs || [], country, city, street, max);
+
+  } catch (err) {
+    msg.textContent = 'Error: ' + err.message;
+    msg.className = 'text-sm text-red-400';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg> Search`;
+  }
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadJobs();
+setInterval(loadJobs, 15000);
+</script>
+</body>
+</html>
