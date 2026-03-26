@@ -5,10 +5,10 @@ import pymysql.cursors
 from datetime import datetime
 from typing import List, Optional
 
-DB_HOST = os.environ.get("DB_HOST", "database-1.cwcf9hkggcry.us-east-1.rds.amazonaws.com")
+DB_HOST = os.environ["DB_HOST"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
-DB_USER = os.environ.get("DB_USER", "admin")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "!QAZ2wsx")
+DB_USER = os.environ["DB_USER"]
+DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_NAME = os.environ.get("DB_NAME", "gmaps_scraper")
 
 
