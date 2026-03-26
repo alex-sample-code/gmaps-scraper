@@ -1,27 +1,88 @@
 # Google Maps Restaurant Scraper
 
-Playwright-based scraper that extracts restaurant information from Google Maps for a given street/area.
+Playwright-based scraper that extracts restaurant information from Google Maps, with a FastAPI backend and web frontend.
 
-## Setup
+## Architecture
+
+```
+frontend/          → Simple HTML UI for triggering scrapes and viewing results
+backend/
+  ├── main.py      → FastAPI app (REST API)
+  ├── scraper.py   → Playwright scraper logic
+  ├── database.py  → MySQL/RDS data layer
+  └── models.py    → Pydantic models
+Dockerfile         → Container image for AWS Fargate deployment
+scraper.py         → Standalone CLI scraper (outputs JSON/CSV)
+```
+
+## Quick Start (Local)
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-## Usage
+### Standalone CLI
 
 ```bash
 python scraper.py
 ```
 
-By default it searches for restaurants on George Street, Sydney, Australia. Edit the `SEARCH_QUERY` variable in `scraper.py` to change the target.
+Searches for restaurants on George Street, Sydney by default. Edit `SEARCH_QUERY` to change the target.
 
-## Output
+### Backend API + Frontend
 
-- `restaurants.json` - Full data in JSON format
-- `restaurants.csv` - Tabular data in CSV format
-- `screenshots/` - Debug screenshots taken during scraping
+```bash
+# Set required environment variables
+export DB_HOST=your-rds-endpoint
+export DB_USER=admin
+export DB_PASSWORD=your-password
+export DB_NAME=gmaps_scraper  # optional, defaults to gmaps_scraper
+
+# Start the API server
+cd backend
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Then open `frontend/index.html` in a browser.
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DB_HOST` | ✅ | — | MySQL/RDS endpoint |
+| `DB_PORT` | ❌ | `3306` | MySQL port |
+| `DB_USER` | ✅ | — | Database username |
+| `DB_PASSWORD` | ✅ | — | Database password |
+| `DB_NAME` | ❌ | `gmaps_scraper` | Database name |
+
+## AWS Fargate Deployment
+
+1. **Build & push image** via CodeBuild or locally:
+   ```bash
+   docker build -t gmaps-scraper .
+   ```
+
+2. **Create ECS task definition** with the environment variables above. For production, use AWS Secrets Manager:
+   ```json
+   "secrets": [
+     {"name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:..."}
+   ]
+   ```
+
+3. **Run on Fargate** with a public subnet (scraper needs internet access for Google Maps).
+
+   Recommended: 1 vCPU / 3 GB memory.
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/scrape` | Start a new scrape job |
+| `GET` | `/api/jobs` | List all jobs |
+| `GET` | `/api/jobs/{id}` | Get job status |
+| `GET` | `/api/jobs/{id}/results` | Get scrape results |
+| `GET` | `/api/search` | Search completed jobs by location |
 
 ## Fields Extracted
 
